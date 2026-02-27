@@ -1,0 +1,22 @@
+{
+  "listen_port": 8080,
+  "log_level": "info",
+  "backends": [
+    {
+      "name": "virtuoso-1",
+      "host": "virtuoso-1.default.svc.cluster.local",
+      "port": 8890,
+      "path": "/sparql"
+    },
+    {
+      "name": "virtuoso-2",
+      "host": "virtuoso-2.default.svc.cluster.local",
+      "port": 8890,
+      "path": "/sparql"
+    }
+  ],
+  "max_concurrent_per_backend": 20,
+  "max_queue_per_backend": 250,
+  "queue_timeout": 120,
+  "backend_timeout": 900
+}
