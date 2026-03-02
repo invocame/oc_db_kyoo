@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from src.config import load_config
 from src.router import Router
 from src.health import router as health_router, init_health
+from src.dashboard import router as dashboard_router
 
 
 # ── Logging setup ──────────────────────────────────────────────────────────────
@@ -74,6 +75,9 @@ app = FastAPI(
 
 # Health and status endpoints
 app.include_router(health_router)
+
+# Include dashboard
+app.include_router(dashboard_router)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "HEAD", "OPTIONS"])
