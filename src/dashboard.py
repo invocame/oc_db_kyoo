@@ -100,7 +100,7 @@ function card(b){
 
 async function poll(){
   try{
-    var r=await fetch('/status');
+    var r=await fetch('status');
     if(!r.ok) throw new Error('HTTP '+r.status);
     var d=await r.json();
     eb.style.display='none';
