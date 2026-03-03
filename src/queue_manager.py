@@ -186,6 +186,8 @@ class BackendQueue:
 
             self._circuit_state = CircuitState.HALF_OPEN
             self.stats.circuit_state = self._circuit_state.value
+            # Clear drain event so requests can enter the queue again
+            self._drain_event.clear()
             logger.info(
                 f"[{self.name}] Circuit HALF_OPEN — probe succeeded, "
                 f"allowing one test request"
