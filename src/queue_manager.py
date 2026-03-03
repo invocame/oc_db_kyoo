@@ -63,6 +63,11 @@ class BackendQueue:
       CLOSED    → healthy, traffic flows normally
       OPEN      → backend is down, all requests skip this backend
       HALF_OPEN → probe succeeded, one real request is allowed through as a test
+
+    Queue drain:
+      When the circuit transitions to OPEN, a drain event is fired so that
+      all requests already waiting in queue bail out immediately (return False)
+      instead of sitting there for queue_timeout seconds.
     """
 
     def __init__(self, name: str, max_concurrent: int, max_queue: int,
@@ -81,6 +86,9 @@ class BackendQueue:
         self._consecutive_failures = 0
         self._last_failure_time: float = 0
         self._circuit_lock = asyncio.Lock()
+
+        # Drain event — set when circuit opens to wake up queued requests
+        self._drain_event = asyncio.Event()
 
         # Semaphore controls how many requests hit the backend concurrently
         self._semaphore = asyncio.Semaphore(max_concurrent)
@@ -123,6 +131,8 @@ class BackendQueue:
             self._consecutive_failures = 0
             self._circuit_state = CircuitState.CLOSED
             self.stats.circuit_state = self._circuit_state.value
+            # Clear drain event so new requests can queue normally
+            self._drain_event.clear()
             if old_state != CircuitState.CLOSED:
                 logger.info(
                     f"[{self.name}] Circuit CLOSED — backend recovered "
@@ -131,7 +141,9 @@ class BackendQueue:
 
     async def record_connection_failure(self):
         """
-        A connection-level failure occurred (ConnectError, timeout before response).
+        A connection-level failure occurred.
+        This includes: ConnectError, ConnectTimeout, ReadTimeout, WriteTimeout,
+        or any other transport-level failure.
         NOT called for HTTP 4xx/5xx from the database — those mean the db is alive.
         """
         async with self._circuit_lock:
@@ -143,14 +155,17 @@ class BackendQueue:
                 self._circuit_state = CircuitState.OPEN
                 self.stats.circuit_state = self._circuit_state.value
                 self.stats.total_circuit_breaks += 1
+                # Fire drain event — wake up all queued requests immediately
+                self._drain_event.set()
                 logger.warning(
                     f"[{self.name}] Circuit OPEN — {self._consecutive_failures} "
-                    f"consecutive connection failures"
+                    f"consecutive failures — draining {self._queue_count} queued requests"
                 )
             elif self._circuit_state == CircuitState.HALF_OPEN:
                 # The test request failed — back to open
                 self._circuit_state = CircuitState.OPEN
                 self.stats.circuit_state = self._circuit_state.value
+                self._drain_event.set()
                 logger.warning(
                     f"[{self.name}] Circuit back to OPEN — half-open test failed"
                 )
@@ -180,9 +195,21 @@ class BackendQueue:
     async def acquire(self) -> bool:
         """
         Try to acquire a slot to send a request to this backend.
-        Returns True if acquired, False if queue is full.
+
+        Returns True if acquired (immediately or after queuing).
+        Returns False if queue is full, circuit is open, or circuit
+        opens while waiting (drain event).
         Raises asyncio.TimeoutError if queue_timeout is exceeded.
+
+        The method checks the drain event every 0.5s so that when the
+        circuit opens, queued requests bail out within ~500ms instead
+        of waiting the full queue_timeout (180s).
         """
+        # Fast-fail if circuit is already open
+        if self._circuit_state == CircuitState.OPEN:
+            self.stats.total_rejected += 1
+            return False
+
         async with self._lock:
             if self._queue_count >= self.max_queue and self._semaphore.locked():
                 self.stats.total_rejected += 1
@@ -192,20 +219,48 @@ class BackendQueue:
             self.stats.total_requests += 1
 
         try:
-            await asyncio.wait_for(
-                self._semaphore.acquire(),
-                timeout=self.queue_timeout
-            )
-            async with self._lock:
-                self._queue_count -= 1
-                self.stats.queued_requests = self._queue_count
-                self.stats.active_requests = self.active_requests
-            return True
+            deadline = time.monotonic() + self.queue_timeout
+
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    # Queue timeout expired
+                    async with self._lock:
+                        self._queue_count -= 1
+                        self.stats.queued_requests = self._queue_count
+                        self.stats.total_timeouts += 1
+                    raise asyncio.TimeoutError()
+
+                # Check drain event — circuit opened while we were waiting?
+                if self._drain_event.is_set():
+                    async with self._lock:
+                        self._queue_count -= 1
+                        self.stats.queued_requests = self._queue_count
+                        self.stats.total_rejected += 1
+                    logger.debug(
+                        f"[{self.name}] Request drained from queue (circuit open)"
+                    )
+                    return False
+
+                # Try to acquire semaphore with a short timeout
+                # so we can re-check the drain event periodically
+                check_interval = min(remaining, 0.5)
+                try:
+                    await asyncio.wait_for(
+                        self._semaphore.acquire(),
+                        timeout=check_interval,
+                    )
+                    # Got the semaphore — we're through
+                    async with self._lock:
+                        self._queue_count -= 1
+                        self.stats.queued_requests = self._queue_count
+                        self.stats.active_requests = self.active_requests
+                    return True
+                except asyncio.TimeoutError:
+                    # Semaphore not available yet, loop back
+                    continue
+
         except asyncio.TimeoutError:
-            async with self._lock:
-                self._queue_count -= 1
-                self.stats.queued_requests = self._queue_count
-                self.stats.total_timeouts += 1
             raise
 
     def release(self):

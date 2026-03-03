@@ -188,8 +188,10 @@ class Router:
                 f"{'─' * 80}"
             )
             backend_queue.record_error()
-            if isinstance(e, httpx.ConnectTimeout):
-                await backend_queue.record_connection_failure()
+            # ALL timeouts count as connection failures for the circuit breaker.
+            # A backend that accepts TCP but never responds is just as dead
+            # as one that refuses connections.
+            await backend_queue.record_connection_failure()
             return Response(
                 content=f"Backend '{backend_name}' timeout",
                 status_code=504, media_type="text/plain",
@@ -250,8 +252,8 @@ class Router:
                     f"{'─' * 80}"
                 )
                 bq.record_error()
-                if isinstance(e, httpx.ConnectTimeout):
-                    await bq.record_connection_failure()
+                # ALL timeouts trigger circuit breaker (same fix as primary path)
+                await bq.record_connection_failure()
                 return Response(
                     content=f"Backend '{name}' timeout",
                     status_code=504, media_type="text/plain",
