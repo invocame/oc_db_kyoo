@@ -248,16 +248,21 @@ class Router:
 
     async def _try_fallback_backends(self, request: Request, exclude: str) -> Response:
         """
-        Try other available backends (primary + fallback) if the first choice was full.
-        Iterates through ALL remaining backends before giving up with 503.
+        Try other available backends if the first choice was full.
+        Respects two-tier routing: tries remaining primaries first,
+        then fallback pool only if ALL primaries have circuit OPEN.
+        Iterates through all candidates before giving up with 503.
         """
         # Read body once — Starlette caches it, safe to call multiple times
         body = await request.body()
         request_info = _extract_request_info(request, body)
 
-        # Collect all backend queues from both pools
-        all_queues = list(self.queue_manager._backends.items()) + \
-                     list(self.queue_manager._fallback_backends.items())
+        # First tier: try remaining primary backends
+        all_queues = list(self.queue_manager._backends.items())
+
+        # Second tier: include fallback only if all primaries are down
+        if self.queue_manager._fallback_backends and self.queue_manager._all_primaries_down():
+            all_queues += list(self.queue_manager._fallback_backends.items())
 
         for name, bq in all_queues:
             if name == exclude:
