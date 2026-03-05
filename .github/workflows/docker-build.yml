@@ -1,9 +1,9 @@
 name: Docker Build and Push
 on:
   push:
-    branches: [ main, master, R2test ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main, master, R2test ]
+    branches: [ main, master ]
 env:
   SERVIZIO_OC: oc_db_kyoo
   DOCKER_REGISTRY: opencitations
