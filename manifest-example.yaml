@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: oc-db-kyoo-virtuoso
-          image: opencitations/oc_db_kyoo:2.0.0
+          image: opencitations/oc_db_kyoo:$(insert_last_version)
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -162,7 +162,7 @@ spec:
     spec:
       containers:
         - name: oc-db-kyoo-qleverindex
-          image: opencitations/oc_db_kyoo:2.0.0
+          image: opencitations/oc_db_kyoo:$(insert_last_version)
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -294,15 +294,19 @@ uv run python app.py --port 9090
 
 ### Docker
 
+The image version is read from `pyproject.toml` (single source of truth). To publish a new image on DockerHub, update the `version` field in `pyproject.toml` and push to `main` — the GitHub Actions workflow will build and push the new tag automatically, skipping the build if that version already exists.
+
 ```bash
-docker build -t opencitations/oc_db_kyoo:2.0.0 .
+VERSION=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+
+docker build -t opencitations/oc_db_kyoo:$VERSION .
 docker run -p 8080:8080 \
   -e MAX_CONCURRENT_PER_BACKEND=5 \
   -e BACKEND_0_NAME=db1 \
   -e BACKEND_0_HOST=localhost \
   -e BACKEND_0_PORT=8890 \
   -e BACKEND_0_PATH=/sparql \
-  opencitations/oc_db_kyoo:2.0.0
+  opencitations/oc_db_kyoo:$VERSION
 ```
 
 ### Kubernetes
